@@ -81,27 +81,27 @@ EASIUR <- readOGR(dsn = "./Data/EASIUR", layer = "Marginal-Social-Cost")
 # EPA ECHO Air Emissions dataset for ID crosswalks 
 air <- read_csv("data/POLL_RPT_COMBINED_EMISSIONS.csv")
 
-# 2018 RSEI facility file for TRIFD to Facility ID crosswalk
-rsei_fac <- read_csv("D:/Downloads Overflow/RSEIv238_spring_Public_Release_Data/facility_data_rsei_v238.csv") 
-
-# Risk Screening Environmental Indicators tract file   
-# http://abt-rsei.s3-website-us-east-1.amazonaws.com/?prefix=microdata2018/census_full/
-# download.file("http://abt-rsei.s3.amazonaws.com/microdata2018/census_full/censusmicroblockgroup2018_2018.csv.gz",
-#               destfile = "data/censusmicroblockgroup2018_2018.csv.gz")
-# gunzip("data/censusmicroblockgroup2018_2018.csv.gz")
-rsei_block <- read_csv("data/censusmicroblockgroup2018_2018.csv",
-                       col_names = F)
-names(rsei_block)  <- c("GEOID10",
-                        "ReleaseNumber",
-                        "ChemicalNumber",
-                        'FacilityNumber',
-                        "Media",
-                        'Conc',
-                        "ToxConc",
-                        "Score",
-                        "CSCORE",
-                        "NCSCORE",
-                        "POP")
+# # 2018 RSEI facility file for TRIFD to Facility ID crosswalk
+# rsei_fac <- read_csv("D:/Downloads Overflow/RSEIv238_spring_Public_Release_Data/facility_data_rsei_v238.csv") 
+# 
+# # Risk Screening Environmental Indicators tract file   
+# # http://abt-rsei.s3-website-us-east-1.amazonaws.com/?prefix=microdata2018/census_full/
+# # download.file("http://abt-rsei.s3.amazonaws.com/microdata2018/census_full/censusmicroblockgroup2018_2018.csv.gz",
+# #               destfile = "data/censusmicroblockgroup2018_2018.csv.gz")
+# # gunzip("data/censusmicroblockgroup2018_2018.csv.gz")
+# rsei_block <- read_csv("data/censusmicroblockgroup2018_2018.csv",
+#                        col_names = F)
+# names(rsei_block)  <- c("GEOID10",
+#                         "ReleaseNumber",
+#                         "ChemicalNumber",
+#                         'FacilityNumber',
+#                         "Media",
+#                         'Conc',
+#                         "ToxConc",
+#                         "Score",
+#                         "CSCORE",
+#                         "NCSCORE",
+#                         "POP")
 
 # we are going to bring in EJSCREEN for demogrphics 
 EJscreen <- read_csv("data/EJscreen/EJSCREEN_2019_USPR.csv")
@@ -117,7 +117,7 @@ names(retire_adder) <- c("retire_y",
                          "retire_m",
                          "ORISPL",
                          "UNITID", 
-                         "technology")
+                         "technology") 
 retire_adder$ORISPL <- as.character(retire_adder$ORISPL)
 
 ####################################################################
@@ -361,226 +361,293 @@ faclist1 <- faclist1 %>% filter(!is.na(FacilityNumber))
 faclist2 <- left_join(dat9, faclist1, by = "FacilityNumber")
 ## SAVE
 write_rds(faclist2, "faclist2.rds")
+names(faclist2)
 
-#ok lets bring this into our main unit-level data 
-mydf <- dat9 %>% dplyr::select(1:21, 144:157)
-
-#add rsei and ejscreen
-# get only the crosswalk
-faclist3 <- faclist2 %>% dplyr::select(1, 4,5,9:80)
-mydf1 <- left_join(mydf, faclist3)
-#reduce
-names(mydf1)
-mydf1 <- mydf1 %>% dplyr::select(1:41, 59:62, 70, 89, 106:109)
-
+##add in CO2
 # what about carbon? 
-  # I think this is in Egrid 
+# I think this is in Egrid 
 egrid18co2 <- egrid18 %>% dplyr::select(ORISPL, UNITID, CO2AN) %>%
   mutate(ORISPL = as.character(ORISPL))
-mydf2 <- left_join(mydf1, egrid18co2)
-
+dat10 <- left_join(faclist2, egrid18co2)
 # bring in retirements 
-mydf3 <- left_join(mydf2, retire_adder) %>% distinct()
+dat11 <- left_join(dat10, retire_adder) %>% distinct()
 
+#reduce to power plants 
 #lets just look at the power plants 
-mydf4 <- mydf3 %>% group_by(ORISPL)%>% mutate(fac_genntan = sum(GENNTAN, na.rm =T)) %>%
+dat12 <- dat11 %>% group_by(ORISPL) %>% mutate(fac_genntan = sum(GENNTAN, na.rm =T)) %>%
   ungroup() %>% filter(fac_genntan > 0)
 
-names(mydf4)
-mydfslim <- mydf4 %>% dplyr::select(1,2,5,15,16, 17, 28, 29, 34, 36, 45, 48, 50, 51, 52:54)
-
-#lets rank 
-names(mydfslim)
-mydfslim <- mydfslim %>% mutate(rank_score = percent_rank(score)*100,
-                                rank_gen = percent_rank(-GENNTAN)*100,
-                                rank_ejscoreratio = percent_rank(ejscore_ratio)*100,
-                                rank_Vulpop = percent_rank(Vulpop_50k)*100,
-                                rank_healthcost = percent_rank(tot_cost_em)*100,
-                                rank_co2 = percent_rank(CO2AN)*100) %>% rowwise() %>%
-  mutate(totrank = sum(c(rank_Vulpop, rank_healthcost, rank_co2), na.rm = T),
-         totrank_2 = sum(c(rank_Vulpop, rank_healthcost,
-                           rank_co2, rank_score, rank_gen,
-                           rank_ejscoreratio), na.rm = T))
-
-superslim <- mydfslim %>%
-  mutate(name = paste(PNAME, CNTYNAME, PSTATABB, UNITID, FUELU1, sep = ",")) %>%
-  dplyr::select(name, contains("rank"))
-
-write.csv(superslim, "prelimexport.csv")
-
-
-#ok this is cool
-
-#lets make some bubble charts 
-
-plot_ly(data = mydfslim, x =~rank_healthcost, y=~rank_Vulpop, z = ~rank_co2, color = ~FUELU1)
-plot_ly(data = mydfslim, x =~tot_cost_em, y=~Vulpop_50k, z = ~CO2AN, color = ~FUELU1)
-hist(superslim$rank_healthcost)
-#lets make a list per load zone
-
-zone_adder <- egrid18_fac %>% dplyr::select(ORISPL, BACODE, NERC, SUBRGN, SRNAME)
-zone_adder$ORISPL <- as.character(zone_adder$ORISPL)
-mydfslim_z <- left_join(mydfslim, zone_adder)
-
-  #how many zones 
-n_distinct(mydfslim_z$BACODE)
-unique(mydfslim_z$NERC)
-unique(mydfslim_z$SRNAME)
-  #use NERC?
-
-#lets test more criteria
-  #totrank_2
-
-#lets look into a sensativity analysis 
-
-#lets deal with facilities that do not have RSEI Scores 
-  #how many?
-nrow(mydfslim %>% filter(is.na(TRIFD))) #alot
-
-
-
-
-
-
-
-
-
-
-
-
-#big problem.... lots of these powerplants do not have RSEI info in 2018.. 
-# lets double check this 
-
-chemTable <- read_csv("C:/Users/Mike Petroni/Documents/RSEI Propublica/QC/V234_Public_Data_Release_Tables/Chemical.csv")
-relTable <- read_csv("C:/Users/Mike Petroni/Documents/RSEI Propublica/QC/V234_Public_Data_Release_Tables/Release.csv")
-elTable <- read_csv("C:/Users/Mike Petroni/Documents/RSEI Propublica/QC/V234_Public_Data_Release_Tables/Elements.csv")
-subTable <- read_csv("C:/Users/Mike Petroni/Documents/RSEI Propublica/QC/V234_Public_Data_Release_Tables/Submission.csv")
-medTable <- read_csv("C:/Users/Mike Petroni/Documents/RSEI Propublica/QC/V234_Public_Data_Release_Tables/MEDIA.csv")
-head(relTable)
-
-datrsei14 <- left_join(elTable, relTable)
-datrsei14 <- left_join(datrsei14, subTable)
-datrsei14 <- left_join(datrsei14, rsei_fac)
-
-#do our facs have score? 
-
-tst <- datrsei14 %>% filter(FacilityNumber %in% faclist1$FacilityNumber) %>%
-  group_by(FacilityNumber, SubmissionYear) %>% summarise(score = sum(Score))
-
-
-datrsei14$SubmissionYear
-
-
-#which ones dont we have? 
-
-needem <- faclist1 %>% filter(!FacilityNumber %in% tst$FacilityNumber) %>% filter(Vulpop_50k == 0)
-needem2 <- top100r %>% filter(FacilityNumber %in% needem$FacilityNumber)
-#do they have NEI emissions? 
-# omg they must!   
-
-
-top100r
-
-
-
-
-
-# What about the proposed projects? 
-EIP  <- read_excel("C:/Users/Mike Petroni/Downloads/EIP Emissions Increase Database and Pipelines Inventory_March 31, 2021.xlsx")
-
-
-
-nrow(datsum %>% filter(costrank == 100))
-
-grou
-         stkhgt_mean_meters_source = 
-           ifelse(!is.na(stkhgt_mean_meters),
-                  "NEI2017",
-                  "Mean Replacement"),
-         stkhgt_m_m = 
-           ifelse(!is.na(stkhgt_mean_meters),
-                  stkhgt_mean_meters,
-                  mean(stkhgt_mean_meters, na.rm =T)))
-
-View(highstack %>% dplyr::select(NOX0H, NOX1H,
-                                 NOX2H, NOX3H,
-                                 NOX4H))
-
-
-(highstack$NOX1H + highstack$NOX2H + highstack$NOX3H + highstack$NOX4H)/4
-  
-
-
-
-
-
-
-
-
-
-
-#merge example Astoria generating station 
-
-ampd_astoria <- ampd_emis %>%
-  filter(grepl("Aurora", `Facility Name`),
-         Year == 2017)
-
-nei_astoria <- egucems_nei17 %>%
-  filter(oris_facility_code == ampd_astoria$`Facility ID (ORISPL)`[1])
-
-
-nei_astoria_fac <- nei17_facility %>%
-  filter(grepl("Aurora", `site name`))
-
-nei_astoria_fac <- nei17_facility %>%
-  filter(`eis facility id` == ampd_astoria$`Facility ID (ORISPL)`[1])
-
-
-
-ampd_astoria <- ampd_emis %>%
-  filter(`Facility Latitude` == 41.8151,
-         Year == 2017)
-
-nei_astoria <- egucems_nei17 %>%
-  filter(latitude == 41.8151)
-
-
-nei_astoria_fac <- nei17_facility %>%
-  filter(`site latitude` == 41.8151)
-
-nei_astoria_fac <- nei17_facility %>%
-  filter(`eis facility id` == ampd_astoria$`Facility ID (ORISPL)`[1])
-
-
-
-#so lets grab what we want here
-
-nei_pol_key <- nei17_facility %>%
-  dplyr::select(`pollutant code`, `pollutant desc`, `pollutant type(s)`) %>%
-  distinct()
-
-
-
-#looks like we dont have all the PM estimates for facilities here... 
-#how many do we have... 
-
-#lets try a merge with just NOX
-nei_stack_key_merge <- egunoncems_nei17 %>% 
-  dplyr::select(oris_facility_code, oris_boiler_id,
-         longitude, latitude, facility_id, poll, ann_value, 52:64, stkhgt) %>%
-  filter(poll == "NOX") %>% distinct() 
-
-ampd_17 <- ampd_emis %>%
-  filter(Year == 2017) %>%
-  mutate(oris_facility_code = `Facility ID (ORISPL)`,
-         oris_boiler_id = `Unit ID`)
-
-tst <- left_join(ampd_17, nei_stack_key_merge)
-
-unique(nei_stack_key$poll)
-unique(egunoncems_nei17$poll)
-
-
+##SAVE
+write_rds(dat12, "EGUdata.rds")
+
+## EJ buffers ####################################################################################
+#make a function that obtains buffer information for each facility 
+library(raster)
+
+# #get centerpoints 
+# fips <- unique(substr(EJscreen$GEOID, 1, 2))
+# getcents <- function(fip){
+#   url <- ifelse(nchar(fip) > 1, 
+#                 paste0("https://www2.census.gov/geo/docs/reference/cenpop2010/blkgrp/CenPop2010_Mean_BG", fip, ".txt"),
+#                 paste0("https://www2.census.gov/geo/docs/reference/cenpop2010/blkgrp/CenPop2010_Mean_BG0", fip, ".txt"))
+#   dat <- read_csv(url)
+#   gc()
+# }
 # 
+# fiplist <- lapply(fips, function (x)  getcents(x))
+# fiplist1 <- fiplist[[1]]
+# for (i in 2:length(fiplist)) fiplist1 <- rbind(fiplist1, fiplist[[i]])
+# fipslistraw <- fiplist1
+# fiplist1$LATITUDE <- as.numeric(fiplist1$LATITUDE)
+# fiplist1$LONGITUDE <- as.numeric(fiplist1$LONGITUDE)
+# #make buffers and intersect points 
+# coordinates(fiplist1) <- c("LONGITUDE", "LATITUDE")
+# points <- st_as_sf(fiplist1)
+# library(sf)
+
+
+#THIS list is off by 12301 Block groups 
+#try with the center points 
+fips <- unique(substr(EJscreen$GEOID, 1, 2))
+getcents2 <- function(fip){
+  print(fip)
+  shape <- block_groups(fip)
+  dat <- as.data.frame(shape)
+  dat <- dat %>% dplyr::select(GEOID, INTPTLAT, INTPTLON)
+  gc()
+  return(dat)
+}
+
+tst <- getcents2(fips[1])
+
+fiplist <- lapply(fips, function (x)  getcents2(x))
+fiplist1 <- fiplist[[1]]
+for (i in 2:length(fiplist)) fiplist1 <- rbind(fiplist1, fiplist[[i]])
+fipslistraw <- fiplist1
+fiplist1$INTPTLAT <- as.numeric(fiplist1$INTPTLAT)
+fiplist1$INTPTLON <- as.numeric(fiplist1$INTPTLON)
+#make buffers and intersect points 
+coordinates(fiplist1) <- c("INTPTLON", "INTPTLAT")
+points <- st_as_sf(fiplist1)
+#save
+write_rds(points, "bgcenters.rds")
+library(sf)
+
+
+#make a list of unique facilites 
+generators <- dat12 %>% dplyr::select(LON, LAT, ORISPL) %>% distinct()
+
+EJbuffers <- function(fac) {
+  #make buffers
+  print(fac)
+  sdf <- generators[fac,]
+  coordinates(sdf) <- c("LON", "LAT")
+  mybuff10k <- st_as_sf(buffer(sdf, width = 10000))
+  mybuff5k <- st_as_sf(buffer(sdf, width = 5000))
+  mybuff50k <- st_as_sf(buffer(sdf, width = 50000))
+  #intersect buffer with blockgroup population centerpoints
+  inter10k <- st_intersection(points, mybuff10k)
+  inter5k <- st_intersection(points, mybuff5k)
+  inter50k <- st_intersection(points, mybuff50k)
+  #grabEJSCREEN stats or each intersect
+  #10k
+  st_geometry(inter10k) = NULL
+  ej10k <- EJscreen %>%
+    filter(ID %in% inter10k$GEOID) %>%
+    mutate(vulpop = VULEOPCT*ACSTOTPOP) %>%
+    summarise(ACSTOTPOP_10k = sum(ACSTOTPOP),
+              VULEOPCT_10k = sum(vulpop)/sum(ACSTOTPOP))
+  #5k
+  st_geometry(inter5k) = NULL
+  ej5k <- EJscreen %>%
+    filter(ID %in% inter5k$GEOID) %>%
+    mutate(vulpop = VULEOPCT*ACSTOTPOP) %>%
+    summarise(ACSTOTPOP_5k = sum(ACSTOTPOP),
+              VULEOPCT_5k = sum(vulpop)/sum(ACSTOTPOP))
+  #50k
+  st_geometry(inter50k) = NULL
+  ej50k <- EJscreen %>%
+    filter(ID %in% inter50k$GEOID) %>%
+    mutate(vulpop = VULEOPCT*ACSTOTPOP) %>%
+    summarise(ACSTOTPOP_50k = sum(ACSTOTPOP),
+              VULEOPCT_50k = sum(vulpop)/sum(ACSTOTPOP))
+  #combine
+  ejdat <- cbind(ej5k, ej50k, ej10k)
+  ejdat$ORISPL <- sdf$ORISPL
+  
+return(ejdat)
+  
+}
+#run and combine 
+ejlist <- lapply(1:nrow(generators), function (x)  EJbuffers(x))
+ejlist1 <- ejlist[[1]]
+for (i in 2:length(ejlist)) ejlist1 <- rbind(ejlist1, ejlist[[i]])
+
+dat12 <- left_join(dat12, ejlist1)
+
+##SAVE
+write_rds(dat12, "EGUdata.rds")
+
+#Toxics #################################################################
+
+#issues, only a few facs have REGISTRY_IDS and even less have RSEI SCORES
+
+#lets try another round of matching 
+FRS_PROGRAM_LINKS <- read_csv("C:/Users/Mike Petroni/Downloads/frs_downloads (1)/FRS_PROGRAM_LINKS.csv")
+
+air_tox <- air %>% filter(REGISTRY_ID %in% dat12$REGISTRY_ID) %>%
+  filter(PGM_SYS_ACRNM == "EIS", REPORTING_YEAR == 2017)
+
+unique(FRS_PROGRAM_LINKS$PGM_SYS_ACRNM)
+
+mylinks <- FRS_PROGRAM_LINKS %>% filter(PGM_SYS_ID %in% dat12$ORISPL,
+                                        PGM_SYS_ACRNM == "CAMDBS")
+
+key <- mylinks %>% select(PGM_SYS_ID, REGISTRY_ID, PRIMARY_NAME, STATE_CODE)
+key$ORISPL <- key$PGM_SYS_ID
+dat12$REGISTRY_ID <- NULL
+dat12 <- left_join(dat12, key)
+
+nareg <- dat12 %>% filter(is.na(REGISTRY_ID)) 
+sum(nareg$GENNTAN, na.rm =T)
+reg <- dat12 %>% filter(!is.na(REGISTRY_ID)) 
+sum(reg$GENNTAN, na.rm =T)
+
+#key for those 800 facilies 
+air_tox2 <- air %>% filter(REGISTRY_ID %in% mylinks$REGISTRY_ID) %>%
+  filter(PGM_SYS_ACRNM == "EIS", REPORTING_YEAR == 2017)
+
+nei_adds <- anti_join(air_tox2, air_tox)
+nei_adds <- nei_adds %>% filter(!grepl("Primary", POLLUTANT_NAME),
+                                !grepl("Volatile", POLLUTANT_NAME),
+                                !grepl("Carbon mono", POLLUTANT_NAME),
+                                !grepl("Nitrogen ox", POLLUTANT_NAME))
+unique(nei_adds$POLLUTANT_NAME)
+unique(nei_adds$PGM_SYS_ID)
+sum(nei_adds$ANNUAL_EMISSION)
+
+#can we toxweight the NEI? 
+RSEI_chem <- read_csv("https://www.epa.gov/sites/production/files/2020-12/chemical_data_rsei_v239.csv")
+tri_NEI_cross <- read_excel("Data/tri-nei-crosswalk (1).xlsx", 
+                            sheet = "NEI to TRI Crosswalk")
+
+#try the facility file.... 
+emis_sum_fac_15420 <- read_csv("Data/NEI/emis_sum_fac_15420.csv")
+mynei <- emis_sum_fac_15420 %>% filter(`eis facility id` %in% air_tox2$PGM_SYS_ID)
+
+#now get the RSEI toxweight for each of the releases
+poll_key <- left_join(tri_NEI_cross, RSEI_chem, by = c("TRI Chemical code" = "CASStandard")) 
+poll_key <- poll_key %>% select(`NEI Pollutant Type`, `NEI pollutant code`, `NEI Pollutant Code Description`,
+                                ITW)
+emis_sum_fac_15420 <- left_join(emis_sum_fac_15420, poll_key,
+                                by = c("pollutant code" = "NEI pollutant code"))
+
+#now lets toxweight the NEI HAPS
+neiweighted <- emis_sum_fac_15420 %>% filter(`NEI Pollutant Type` == "HAP") %>%
+  mutate(AirHaz = `total emissions`*ITW) %>%
+  group_by(`eis facility id`) %>% 
+  summarise(Fac_AirHaz = sum(AirHaz, na.rm = T),
+            NAICS = `naics description`[1],
+            Name = `site name`[1]) %>% ungroup()
+#facinating 
+
+#now lets link these to our CAMDBS ids 
+eis_links <- FRS_PROGRAM_LINKS %>% filter(PGM_SYS_ACRNM == "EIS")
+eis_links$PGM_SYS_ID <- as.character(eis_links$PGM_SYS_ID)
+neiweighted$`eis facility id` <- as.character(neiweighted$`eis facility id`)
+neiweighted <- left_join(neiweighted, eis_links, by = c("eis facility id" = "PGM_SYS_ID"))
+#and the camdbs
+camdbs_link <- FRS_PROGRAM_LINKS %>% filter(PGM_SYS_ACRNM == "CAMDBS")
+camdbs_link <- camdbs_link %>% select(REGISTRY_ID, PGM_SYS_ID) 
+names(camdbs_link) <- c("REGISTRY_ID", "ORISPL")
+neiweighted <- left_join(neiweighted, camdbs_link, by = "ORISPL")
+
+#how much coverage do we get? 
+tst <- left_join(dat_fac, neiweighted)
+#total fac
+length(unique(tst$ORISPL))
+tsthap <- tst %>% filter(!is.na(Fac_AirHaz))
+#total HAP facs covered
+length(unique(tsthap$ORISPL))
+#cover of HAP data by generation
+sum(tsthap$GENNTAN)/sum(tst$GENNTAN)
+#what is not covered by RSEI
+tst2 <- tst %>% filter(is.na(score), !is.na(Fac_AirHaz))
+tst3 <- emis_sum_fac_15420 %>% filter(`eis facility id` %in% tst2$`eis facility id`)
+tst3 <- tst3 %>% filter(`pollutant type(s)` == "HAP")
+sum(tst3$`total emissions`)
+unique(tst3$`pollutant code`)
+
+#benzidine from Martin
+View(emis_sum_fac_15420 %>% filter(`eis facility id` == "4207311"))
+
+
+#### NYCase Study  ##########################################################
+#steps: 
+#grab the peja and get the center points 
+# download.file("http://gis.ny.gov/gisdata/fileserver/?DSID=1273&file=PEJA.zip",
+#               destfile = "Data/PEJA_NY_2021.zip")
+# unzip("Data/PEJA_NY_2021.zip")
+library(foreign)
+pejas <- read.dbf("Data/PEJA_NY_2021/PEJA.dbf")
+
+#next subset our center point file to indicate PEJA
+pejas_y <- pejas %>% filter(PEJA == "Yes")
+points$NY <- ifelse(points$GEOID %in% pejas$GEOID, 1, 0)
+points$PEJA <- ifelse(points$GEOID %in% pejas_y$GEOID, 1, 0)
+
+#now we make a function that splits the emissions costs 
+#make a list of unique facilites 
+generators_NY <- dat12 %>%
+  filter(PSTATABB == "NY") %>% dplyr::select(LON, LAT, ORISPL) %>% distinct()
+fac = 1
+EJbuffers_NY <- function(fac) {
+  #make buffers
+  print(fac)
+  sdf <- generators_NY[fac,]
+  coordinates(sdf) <- c("LON", "LAT")
+  mybuff50k <- st_as_sf(buffer(sdf, width = 50000))
+  #intersect buffer with blockgroup population centerpoints
+  inter50k <- st_intersection(points, mybuff50k)
+  #grabEJSCREEN stats or each intersect
+  #50k
+  st_geometry(inter50k) = NULL
+  #how many people in the buffer?
+  ej50k <- EJscreen %>%
+    filter(ID %in% inter50k$GEOID) %>%
+    mutate(vulpop = VULEOPCT*ACSTOTPOP) %>%
+    summarise(ACSTOTPOP_50k = sum(ACSTOTPOP),
+              VULEOPCT_50k = sum(vulpop)/sum(ACSTOTPOP))
+  #how many people in the buffer in NY
+  ej50k_NY <- EJscreen %>%
+    filter(ID %in% inter50k$GEOID & ID %in% pejas$GEOID) %>%
+    mutate(vulpop = VULEOPCT*ACSTOTPOP) %>%
+    summarise(ACSTOTPOP_50k = sum(ACSTOTPOP),
+              VULEOPCT_50k = sum(vulpop)/sum(ACSTOTPOP))
+  #how many people in the buffer in NY in a PEJA
+  ej50k_NY_PEJA <- EJscreen %>%
+    filter(ID %in% inter50k$GEOID & ID %in% pejas_y$GEOID) %>%
+    mutate(vulpop = VULEOPCT*ACSTOTPOP) %>%
+    summarise(ACSTOTPOP_50k = sum(ACSTOTPOP),
+              VULEOPCT_50k = sum(vulpop)/sum(ACSTOTPOP))
+  
+  #calculate the benefit percentage of a reduction here
+  EJ_benefit_per = ej50k_NY_PEJA$ACSTOTPOP_50k/ej50k_NY$ACSTOTPOP_50k
+  NY_benefit_per = ej50k_NY$ACSTOTPOP_50k/ej50k$ACSTOTPOP_50k
+  #makedf
+  ejdat <- data.frame(EJ_benefit_per, NY_benefit_per)
+  ejdat$ORISPL <- sdf$ORISPL
+  
+  return(ejdat)
+  
+}
+
+NY_ejlist <- lapply(1:nrow(generators_NY), function (x)  EJbuffers_NY(x))
+NY_ejlist1 <- NY_ejlist[[1]]
+for (i in 2:length(NY_ejlist)) NY_ejlist1 <- rbind(NY_ejlist1, NY_ejlist[[i]])
+
+
+
+
 
 
